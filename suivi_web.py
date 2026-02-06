@@ -1,169 +1,167 @@
-import os
 import streamlit as st
-import openpyxl
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
+import base64
 
-# ================= CONFIG GOOGLE SHEETS =================
-SCOPE = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
 
-creds = ServiceAccountCredentials.from_json_keyfile_dict(
-    st.secrets["gcp_service_account"],
-    SCOPE
-)
-client = gspread.authorize(creds)
-SHEET_NAME = "suivi des opérations"
+# ---------------- FONCTION LOGO MOBILE COMPATIBLE ----------------
+@st.cache_data
+def get_logo_base64():
+    logo_path = "logo.png"
+    try:
+        with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except FileNotFoundError:
+        st.error("❌ logo.png manquant dans le dossier app")
+        return None
 
-# ================= DONNÉES FIXES =================
+
+# ---------------- CONFIG ----------------
 SERRES = ['B', 'C', 'D', 'E', 'F', 'G', 'H']
 DELTAS = [str(i) for i in range(1, 33)]
 CULTURES = ['tomate', 'pastèque', 'poivron', 'concombre', 'laitue', 'ciboulette', 'courgette', 'herbes aromatiques']
-TRAITEMENTS = ['fongicide', 'insecticide', 'acaricide', 'insecticide/acaricide', 'raticide', 'bio-stimulant',
-               'désinfectant', 'engrais foliaire']
-TRAITEMENT_COLORS = {
-    'fongicide': '#ff9999', 'insecticide': '#99ff99', 'acaricide': '#99ccff',
-    'insecticide/acaricide': '#ffcc99', 'raticide': '#cccccc', 'bio-stimulant': '#ffff99',
-    'désinfectant': '#ffccff', 'engrais foliaire': '#ccffcc'
-}
+OPERATIONS = ['traitement', 'irrigation']
 SOLUTIONS_IRRI = ['AB', 'CD', 'M', 'Urée', 'enracineur', 'désinfectant']
 ECS = ['1.6', '1.8', '2', '2.5', '3', '3.5', '4']
 
-EXCEL_PRODUITS = "produits.xlsx"
-EXCEL_OPERATIONS = "operations.xlsx"
-
-# ================= CREATION AUTOMATIQUE EXCEL =================
-if not os.path.exists(EXCEL_PRODUITS):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(["Designation", "Dose", "Cible"])
-    wb.save(EXCEL_PRODUITS)
-
-if not os.path.exists(EXCEL_OPERATIONS):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(["Date", "Serre", "Delta", "Culture", "Traitement", "Solution", "ECS", "Remarques"])
-    wb.save(EXCEL_OPERATIONS)
-
-# ================= FONCTIONS =================
-def charger_produits():
-    wb = openpyxl.load_workbook(EXCEL_PRODUITS)
-    ws = wb.active
-    return [row for row in ws.iter_rows(min_row=2, values_only=True) if row]
-
-def ajouter_produit(designation, dose, cible):
-    wb = openpyxl.load_workbook(EXCEL_PRODUITS)
-    ws = wb.active
-    ws.append([designation, dose, cible])
-    wb.save(EXCEL_PRODUITS)
-
-def charger_operations():
-    wb = openpyxl.load_workbook(EXCEL_OPERATIONS)
-    ws = wb.active
-    return [row for row in ws.iter_rows(min_row=2, values_only=True) if row]
-
-def ajouter_operation(date, serre, delta, culture, traitement, solution, ecs, remarques):
-    wb = openpyxl.load_workbook(EXCEL_OPERATIONS)
-    ws = wb.active
-    ws.append([date, serre, delta, culture, traitement, solution, ecs, remarques])
-    wb.save(EXCEL_OPERATIONS)
-
-def filter_operations(ops, serre_filter, culture_filter, traitement_filter):
-    filtered = []
-    for op in ops:
-        _, serre, _, culture, traitement, _, _, _ = op
-        if (serre_filter != "Toutes" and serre != serre_filter):
-            continue
-        if (culture_filter != "Toutes" and culture != culture_filter):
-            continue
-        if (traitement_filter != "Tous" and traitement != traitement_filter):
-            continue
-        filtered.append(op)
-    return filtered
-
-# ================= STYLE CSS MOBILE =================
+# ---------------- CSS ----------------
 st.markdown("""
 <style>
-body {font-family: sans-serif;}
-.card {padding: 10px; margin: 5px 0; border-radius: 8px; box-shadow: 1px 1px 4px #aaa;}
-.card-title {font-weight: bold; font-size: 16px; margin-bottom: 3px;}
-.card-content {font-size: 14px;}
-.stButton>button {background-color:#0080ff; color:white; width:100%; margin-top:5px;}
-@media (max-width: 600px){
-    .card-title {font-size:14px;}
-    .card-content {font-size:12px;}
+.main { background-color: #f0f8f0; }
+.stSelectbox > div > div > div,
+.stTextInput > div > div > input {
+    background-color: #e8f5e8 !important;
+    border: 2px solid #4caf50 !important;
+    border-radius: 8px !important;
+}
+.stButton > button {
+    background: linear-gradient(45deg, #4caf50, #45a049) !important;
+    color: white !important;
+    border-radius: 25px !important;
+    font-weight: bold !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= INTERFACE =================
-st.title("Suivi des opérations pépinière 🌱")
+st.set_page_config(page_title="Suivi Opérations", layout="centered")
 
-# ---------- PRODUITS ----------
-st.subheader("Produits disponibles")
-produits = charger_produits()
-if produits:
-    for p in produits:
-        st.markdown(
-            f"<div class='card'><div class='card-title'>{p[0]}</div><div class='card-content'><b>Dose:</b> {p[1]} | <b>Cible:</b> {p[2]}</div></div>",
-            unsafe_allow_html=True
-        )
+# ---------------- LOGO ----------------
+logo_base64 = get_logo_base64()
+if logo_base64:
+    st.markdown(f"""
+    <div style="text-align:center">
+        <img src="data:image/png;base64,{logo_base64}" width="200">
+    </div>
+    """, unsafe_allow_html=True)
 
-st.markdown("### Ajouter un produit")
-new_designation = st.text_input("Désignation", key="prod_name")
-new_dose = st.text_input("Dose", key="prod_dose")
-new_cible = st.text_input("Cible", key="prod_cible")
-if st.button("Ajouter produit"):
-    if new_designation and new_dose and new_cible:
-        ajouter_produit(new_designation, new_dose, new_cible)
-        st.success(f"Produit '{new_designation}' ajouté !")
-    else:
-        st.warning("Veuillez remplir tous les champs.")
+st.markdown("<h1 style='text-align:center;color:#2e7d32'>Suivi des opérations – Pépinière</h1>", unsafe_allow_html=True)
 
-# ---------- OPERATIONS ----------
-st.markdown("---")
-st.subheader("Ajouter une opération")
-op_serre = st.selectbox("Serre", ["Toutes"] + SERRES)
-op_delta = st.selectbox("Delta", ["Toutes"] + DELTAS)
-op_culture = st.selectbox("Culture", ["Toutes"] + CULTURES)
-op_traitement = st.selectbox("Traitement", ["Tous"] + TRAITEMENTS)
-op_solution = st.selectbox("Solution", SOLUTIONS_IRRI)
-op_ecs = st.selectbox("ECS", ECS)
-op_remarques = st.text_input("Remarques")
-if st.button("Ajouter opération"):
-    date_str = datetime.now().strftime("%d/%m/%Y %H:%M")
-    ajouter_operation(date_str, op_serre, op_delta, op_culture, op_traitement, op_solution, op_ecs, op_remarques)
-    st.success(f"Opération ajoutée pour {op_culture} dans serre {op_serre}")
+# ---------------- GOOGLE SHEET ----------------
+scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+client = gspread.authorize(creds)
+SPREADSHEET_NAME = "suivi des opérations"
 
-# ---------- AFFICHAGE OPERATIONS ----------
-st.markdown("---")
-st.subheader("Liste des opérations")
-ops = charger_operations()
-ops_filtered = filter_operations(ops, op_serre, op_culture, op_traitement)
 
-# Pagination
-items_per_page = 8
-page = st.number_input("Page", min_value=1, max_value=(len(ops_filtered)-1)//items_per_page+1, value=1)
-start = (page-1)*items_per_page
-end = start + items_per_page
+# ---------------- PRODUITS EXCEL ----------------
+@st.cache_data
+def load_produits():
+    try:
+        df = pd.read_excel("produits.xlsx")
+        df = df.dropna(subset=['Designation']).reset_index(drop=True)
+        return df
+    except (FileNotFoundError, ValueError):
+        df = pd.DataFrame(columns=['Designation', 'dose', 'cible', 'mode_d_application'])
+        df.to_excel("produits.xlsx", index=False)  # Crée Sheet1 par défaut
+        return df
 
-for op in ops_filtered[start:end]:
-    date, serre, delta, culture, traitement, solution, ecs, remarques = op
-    color = TRAITEMENT_COLORS.get(traitement, "#f0f8ff")
-    with st.expander(f"{culture} - Serre {serre} Delta {delta} | {traitement}"):
-        st.markdown(
-            f"<div class='card' style='background-color:{color};'><div class='card-content'><b>Date:</b> {date} | <b>Solution:</b> {solution} | <b>ECS:</b> {ecs}<br><b>Remarques:</b> {remarques}</div></div>",
-            unsafe_allow_html=True
-        )
 
-# ---------- EXPORT EXCEL ----------
-if st.button("Exporter les opérations filtrées en Excel"):
-    df = pd.DataFrame(ops_filtered, columns=["Date", "Serre", "Delta", "Culture", "Traitement", "Solution", "ECS", "Remarques"])
-    export_file = f"operations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    df.to_excel(export_file, index=False)
-    with open(export_file, "rb") as f:
-        st.download_button("Télécharger Excel", f, file_name=export_file)
+# ---------------- UI PRINCIPALE ----------------
+col1, col2, col3, col4 = st.columns(4)
+with col1: serre = st.selectbox("**Serre**", SERRES)
+with col2: deltas = st.multiselect("**Delta(s)**", DELTAS)
+with col3: culture = st.selectbox("**Culture**", CULTURES)
+with col4: operation = st.selectbox("**Opération**", OPERATIONS)
+
+details = ""
+
+# ---------------- TRAITEMENT ----------------
+if operation == "traitement":
+    produits_df = load_produits()
+    produits_list = produits_df['Designation'].dropna().unique().tolist()
+    produits_selectionnes = st.multiselect("**🧪 Produits**", produits_list)
+
+    details_list = []
+    if produits_selectionnes:
+        for i, produit in enumerate(produits_selectionnes):
+            row = produits_df[produits_df['Designation'] == produit].iloc[0]
+            c1, c2, c3 = st.columns(3)
+            with c1: st.text_input(f"Dose ({produit})", row['dose'], disabled=True, key=f"d{i}")
+            with c2: st.text_input(f"Cible ({produit})", row['cible'], disabled=True, key=f"c{i}")
+            with c3: st.text_input(f"Mode ({produit})", row['mode_d_application'], disabled=True, key=f"m{i}")
+            details_list.append(f"{produit} - {row['dose']} - {row['cible']}")
+
+    details = " | ".join(details_list)
+
+
+# ---------------- IRRIGATION ----------------
+elif operation == "irrigation":
+    c1, c2 = st.columns(2)
+    with c1:
+        solution = st.selectbox("Solution", SOLUTIONS_IRRI)
+    with c2:
+        ec = st.selectbox("EC", ECS)
+    details = f"{solution} EC {ec}"
+
+# ---------------- ENREGISTRER ----------------
+if deltas and details and st.button("💾 ENREGISTRER"):
+    try:
+        sh = client.open(SPREADSHEET_NAME)
+    except gspread.SpreadsheetNotFound:
+        sh = client.create(SPREADSHEET_NAME)
+
+    for delta in deltas:
+        feuille = f"{serre}{delta}"
+        try:
+            ws = sh.worksheet(feuille)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=feuille, rows=1000, cols=10)
+            ws.append_row(["Date", "Serre", "Delta", "Culture", "Operation", "Details"])
+
+        ws.append_row([
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            serre, delta, culture, operation, details
+        ])
+
+    st.success(f"✅ Enregistré dans {len(deltas)} feuille(s): {serre + deltas[0]}...")
+    st.rerun()
+
+# ---------------- AJOUT PRODUIT CORRIGÉ (SIMPLE & SÛR) ----------------
+st.divider()
+with st.form("ajout_produit"):
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: designation = st.text_input("Nom produit")
+    with c2: dose = st.text_input("Dose")
+    with c3: cible = st.text_input("Cible")
+    with c4: mode = st.selectbox("Mode", ["feuilles", "racines", "sol", "général"])
+
+    if st.form_submit_button("➕ Ajouter"):
+        # MÉTHODE SIMPLE : Lire → Ajouter ligne → Réécrire
+        df = load_produits()
+        new_row = [designation, dose, cible, mode]
+        df.loc[len(df)] = new_row  # Ajoute directement
+        df.to_excel("produits.xlsx", index=False)  # Réécrit TOUT (Sheet1 auto)
+
+        st.cache_data.clear()
+        st.success(f"✅ '{designation}' ajouté ! ({len(df)} produits total)")
+        st.rerun()
+
+# ---------------- VISUALISER ----------------
+with st.expander("📋 Produits"):
+    st.dataframe(load_produits(), use_container_width=True)
+
+if st.button("🔄 Vider cache produits"):
+    st.cache_data.clear()
+    st.rerun()
